@@ -1,103 +1,251 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useCallback } from 'react';
+import {
+  Box,
+  Button,
+  Container,
+  FormControl,
+  FormLabel,
+  Input,
+  NumberInput,
+  NumberInputField,
+  VStack,
+  Heading,
+  Text,
+  useToast,
+  SimpleGrid,
+  useColorModeValue,
+  Table,
+  Thead,
+  Tbody,
+  Tr,
+  Th,
+  Td,
+} from '@chakra-ui/react';
+import { useDropzone } from 'react-dropzone';
+
+interface ClientData {
+  name: string;
+  address: string;
+  travelTime: string;
+  preferredDay?: string;
+  jobLength?: string;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [csvData, setCsvData] = useState<ClientData[]>([]);
+  const [numTeams, setNumTeams] = useState(2);
+  const [teamNames, setTeamNames] = useState<string[]>(['Team 1', 'Team 2']);
+  const [assignments, setAssignments] = useState<{ [key: string]: ClientData[] }>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const toast = useToast();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+  const borderColor = useColorModeValue('gray.200', 'gray.600');
+  const bgColor = useColorModeValue('gray.50', 'gray.700');
+
+  const parseCSV = (text: string): ClientData[] => {
+    const rows = text.split('\n')
+      .map(row => row.trim())
+      .filter(row => row.length > 0)
+      .slice(1); // Skip header row
+
+    return rows.map(row => {
+      const columns = row.split(',').map(col => col.trim().replace(/^"|"$/g, ''));
+      return {
+        name: columns[0].replace('*', '').trim(), // Remove asterisk from names
+        address: columns[1],
+        travelTime: columns[4],
+        preferredDay: columns[10],
+        jobLength: columns[11],
+      };
+    });
+  };
+
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    const file = acceptedFiles[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        const parsedData = parseCSV(text);
+        setCsvData(parsedData);
+      };
+      reader.readAsText(file);
+    }
+  }, []);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      'text/csv': ['.csv'],
+    },
+    multiple: false,
+  });
+
+  const handleNumTeamsChange = (value: number) => {
+    setNumTeams(value);
+    // Update team names array when number of teams changes
+    const newTeamNames = Array.from({ length: value }, (_, i) => 
+      teamNames[i] || `Team ${i + 1}`
+    );
+    setTeamNames(newTeamNames);
+  };
+
+  const handleTeamNameChange = (index: number, value: string) => {
+    const newTeamNames = [...teamNames];
+    newTeamNames[index] = value;
+    setTeamNames(newTeamNames);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+
+    try {
+      if (csvData.length === 0) {
+        throw new Error('Please upload a CSV file first');
+      }
+
+      const assignments: { [key: string]: ClientData[] } = {};
+      
+      // Initialize empty arrays for each team
+      teamNames.forEach(team => {
+        assignments[team] = [];
+      });
+
+      // Distribute items evenly
+      csvData.forEach((item, index) => {
+        const teamIndex = index % teamNames.length;
+        assignments[teamNames[teamIndex]].push(item);
+      });
+
+      setAssignments(assignments);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to process the CSV file',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Container maxW="container.xl" py={10}>
+      <VStack spacing={8} align="stretch">
+        <Heading as="h1" size="xl" textAlign="center">
+          Worksite Team Assigner
+        </Heading>
+
+        <Box as="form" onSubmit={handleSubmit}>
+          <VStack spacing={4}>
+            <FormControl isRequired>
+              <FormLabel>Upload CSV File</FormLabel>
+              <Box
+                {...getRootProps()}
+                p={10}
+                border="2px dashed"
+                borderColor={isDragActive ? 'blue.400' : borderColor}
+                borderRadius="md"
+                bg={isDragActive ? 'blue.50' : bgColor}
+                cursor="pointer"
+                transition="all 0.2s"
+                _hover={{ borderColor: 'blue.400' }}
+              >
+                <input {...getInputProps()} />
+                <Text textAlign="center">
+                  {isDragActive
+                    ? 'Drop the CSV file here'
+                    : 'Drag and drop a CSV file here, or click to select'}
+                </Text>
+                {csvData.length > 0 && (
+                  <Text textAlign="center" mt={2} color="green.500">
+                    {csvData.length} clients loaded
+                  </Text>
+                )}
+              </Box>
+            </FormControl>
+
+            <FormControl isRequired>
+              <FormLabel>Number of Teams</FormLabel>
+              <NumberInput
+                min={2}
+                max={20}
+                value={numTeams}
+                onChange={(_, value) => handleNumTeamsChange(value)}
+              >
+                <NumberInputField />
+              </NumberInput>
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Team Names</FormLabel>
+              <SimpleGrid columns={2} spacing={4}>
+                {teamNames.map((name, index) => (
+                  <Input
+                    key={index}
+                    value={name}
+                    onChange={(e) => handleTeamNameChange(index, e.target.value)}
+                    placeholder={`Team ${index + 1}`}
+                  />
+                ))}
+              </SimpleGrid>
+            </FormControl>
+
+            <Button
+              type="submit"
+              colorScheme="blue"
+              isLoading={isLoading}
+              loadingText="Processing..."
+              width="full"
+              isDisabled={csvData.length === 0}
+            >
+              Assign Teams
+            </Button>
+          </VStack>
+        </Box>
+
+        {Object.keys(assignments).length > 0 && (
+          <Box mt={8}>
+            <Heading as="h2" size="lg" mb={4}>
+              Team Assignments
+            </Heading>
+            {Object.entries(assignments).map(([team, clients]) => (
+              <Box key={team} mb={8} p={4} borderWidth={1} borderRadius="md">
+                <Heading as="h3" size="md" mb={4}>
+                  {team}
+                </Heading>
+                <Table variant="simple">
+                  <Thead>
+                    <Tr>
+                      <Th>Client Name</Th>
+                      <Th>Address</Th>
+                      <Th>Travel Time</Th>
+                      <Th>Preferred Day</Th>
+                      <Th>Job Length</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {clients.map((client, index) => (
+                      <Tr key={index}>
+                        <Td>{client.name}</Td>
+                        <Td>{client.address}</Td>
+                        <Td>{client.travelTime}</Td>
+                        <Td>{client.preferredDay || 'Any'}</Td>
+                        <Td>{client.jobLength || 'Not specified'}</Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </VStack>
+    </Container>
   );
 }
