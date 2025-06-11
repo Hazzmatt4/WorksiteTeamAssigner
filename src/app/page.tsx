@@ -24,6 +24,8 @@ import {
   Td,
 } from '@chakra-ui/react';
 import { useDropzone } from 'react-dropzone';
+import Papa from 'papaparse';
+import type { ParseResult } from 'papaparse';
 
 interface ClientData {
   name: string;
@@ -70,21 +72,21 @@ export default function Home() {
   const bgColor = useColorModeValue('gray.50', 'gray.700');
 
   const parseCSV = (text: string): ClientData[] => {
-    const rows = text.split('\n')
-      .map(row => row.trim())
-      .filter(row => row.length > 0)
-      .slice(1); // Skip header row
-
-    return rows.map(row => {
-      const columns = row.split(',').map(col => col.trim().replace(/^"|"$/g, ''));
-      return {
-        name: columns[0].replace('*', '').trim(), // Remove asterisk from names
-        address: columns[1],
-        travelTime: columns[4],
-        preferredDay: columns[10],
-        jobLength: columns[11],
-      };
+    const parsed: ParseResult<string[]> = Papa.parse<string[]>(text, {
+      skipEmptyLines: true,
     });
+    if (!parsed.data || parsed.data.length < 2) return [];
+    const header: string[] = parsed.data[0];
+    const rows: string[][] = parsed.data.slice(1) as string[][];
+    return rows
+      .filter((row: string[]) => row.join() !== header.join())
+      .map((columns: string[]) => ({
+        name: columns[0]?.replace('*', '').trim() || '',
+        address: columns[1] || '',
+        travelTime: columns[4] || '',
+        preferredDay: columns[10] || '',
+        jobLength: columns[11] || '',
+      }));
   };
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
