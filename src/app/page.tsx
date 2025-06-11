@@ -33,6 +33,31 @@ interface ClientData {
   jobLength?: string;
 }
 
+interface ErrorWithMessage {
+  message: string;
+}
+
+function isErrorWithMessage(error: unknown): error is ErrorWithMessage {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as Record<string, unknown>).message === 'string'
+  );
+}
+
+function toErrorWithMessage(maybeError: unknown): ErrorWithMessage {
+  if (isErrorWithMessage(maybeError)) return maybeError;
+
+  try {
+    return new Error(JSON.stringify(maybeError));
+  } catch {
+    // fallback in case there's an error stringifying the maybeError
+    // like with circular references for example.
+    return new Error(String(maybeError));
+  }
+}
+
 export default function Home() {
   const [csvData, setCsvData] = useState<ClientData[]>([]);
   const [numTeams, setNumTeams] = useState(2);
@@ -121,10 +146,11 @@ export default function Home() {
       });
 
       setAssignments(assignments);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorWithMessage = toErrorWithMessage(error);
       toast({
         title: 'Error',
-        description: error.message || 'Failed to process the CSV file',
+        description: errorWithMessage.message || 'Failed to process the CSV file',
         status: 'error',
         duration: 5000,
         isClosable: true,
