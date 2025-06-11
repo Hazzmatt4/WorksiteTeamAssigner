@@ -60,11 +60,139 @@ function toErrorWithMessage(maybeError: unknown): ErrorWithMessage {
   }
 }
 
+// Helper to parse sessions and teams required from jobLength
+function parseSessionAndTeams(jobLength: string): { sessions: number; teams: number } {
+  const lower = jobLength.toLowerCase();
+  let sessions = 1;
+  let teams = 1;
+  if (lower.includes('full')) sessions = 2;
+  if (lower.includes('half')) sessions = 1;
+  if (lower.match(/\b2\s*teams?\b/)) teams = 2;
+  if (lower.match(/\b3\s*teams?\b/)) teams = 3;
+  if (lower.match(/\b4\s*teams?\b/)) teams = 4;
+  return { sessions, teams };
+}
+
+// Helper to abbreviate date/session notes
+function abbreviateDateRequested(input: string | undefined): string {
+  if (!input || !input.trim()) return 'Any Day';
+  const val = input.trim().toLowerCase();
+  if (val === 'any' || val === 'any day') return 'Any Day';
+  let norm = val.replace(/morning/g, 'am').replace(/afternoon/g, 'pm');
+  // Monday
+  if (norm === 'monday') return 'Mon Any';
+  if (norm.includes('monday')) {
+    if (norm.includes('pm')) return 'Mon PM';
+    if (norm.includes('am')) return 'Mon AM';
+    return 'Mon Any';
+  }
+  // Tuesday
+  if (norm === 'tuesday') return 'Tues Any';
+  if (norm.includes('tuesday')) {
+    if (norm.includes('pm')) return 'Tues PM';
+    if (norm.includes('am')) return 'Tues AM';
+    return 'Tues Any';
+  }
+  // Wednesday
+  if (norm === 'wednesday') return 'Wed Any';
+  if (norm.includes('wednesday')) {
+    if (norm.includes('pm')) return 'Wed PM';
+    if (norm.includes('am')) return 'Wed AM';
+    return 'Wed Any';
+  }
+  // Abbreviated forms
+  if (norm === 'mon') return 'Mon Any';
+  if (norm === 'tue' || norm === 'tues') return 'Tues Any';
+  if (norm === 'wed') return 'Wed Any';
+  if (norm.includes('mon')) {
+    if (norm.includes('pm')) return 'Mon PM';
+    if (norm.includes('am')) return 'Mon AM';
+    return 'Mon Any';
+  }
+  if (norm.includes('tue') || norm.includes('tues')) {
+    if (norm.includes('pm')) return 'Tues PM';
+    if (norm.includes('am')) return 'Tues AM';
+    return 'Tues Any';
+  }
+  if (norm.includes('wed')) {
+    if (norm.includes('pm')) return 'Wed PM';
+    if (norm.includes('am')) return 'Wed AM';
+    return 'Wed Any';
+  }
+  if (norm.includes('am')) return norm.toUpperCase();
+  if (norm.includes('pm')) return norm.toUpperCase();
+  return input;
+}
+
+// List of all possible sessions
+const ALL_SESSIONS = [
+  'Mon AM', 'Mon PM',
+  'Tues AM', 'Tues PM',
+  'Wed AM', 'Wed PM',
+];
+
+// Helper to get all available sessions, or filter by requested
+function getAvailableSessions(requested: string | undefined): string[] {
+  if (!requested || requested === 'Any Day') return ALL_SESSIONS;
+  // If a specific session is requested, return only that
+  if (ALL_SESSIONS.includes(requested)) return [requested];
+  // If only a day is specified (e.g., 'Mon Any'), return both sessions for that day
+  if (requested.startsWith('Mon')) return ['Mon AM', 'Mon PM'];
+  if (requested.startsWith('Tues')) return ['Tues AM', 'Tues PM'];
+  if (requested.startsWith('Wed')) return ['Wed AM', 'Wed PM'];
+  return ALL_SESSIONS;
+}
+
+// Scheduling function
+function assignSessionsToTeams(
+  clients: ClientData[],
+  teamNames: string[]
+): { assignments: { team: string; client: ClientData; session: string }[]; teamSessions: Record<string, string[]> } {
+  // Track sessions assigned to each team
+  const teamSessions: Record<string, string[]> = {};
+  teamNames.forEach((team) => (teamSessions[team] = []));
+  // Track assignments
+  const assignments: { team: string; client: ClientData; session: string }[] = [];
+
+  // For each client/worksite
+  clients.forEach((client) => {
+    const { sessions, teams } = parseSessionAndTeams(client.jobLength || '');
+    const requested = abbreviateDateRequested(client.preferredDay);
+    const possibleSessions = getAvailableSessions(requested);
+    let sessionsNeeded = sessions;
+    const usedSessions: string[] = [];
+
+    // For each required session
+    for (let s = 0; s < sessionsNeeded; s++) {
+      // Find the earliest available session not already used for this client
+      const available = possibleSessions.filter((sess) => !usedSessions.includes(sess));
+      let sessionToAssign = available[0];
+      if (!sessionToAssign) break; // No more available sessions
+      usedSessions.push(sessionToAssign);
+
+      // For each team required in this session
+      let teamsNeeded = teams;
+      // Find teams with the fewest sessions assigned, not already booked for this session
+      const sortedTeams = teamNames
+        .filter((team) => !teamSessions[team].includes(sessionToAssign) && teamSessions[team].length < 6)
+        .sort((a, b) => teamSessions[a].length - teamSessions[b].length);
+      for (let t = 0; t < teamsNeeded; t++) {
+        const team = sortedTeams[t];
+        if (!team) break; // Not enough teams available
+        teamSessions[team].push(sessionToAssign);
+        assignments.push({ team, client, session: sessionToAssign });
+      }
+    }
+  });
+  return { assignments, teamSessions };
+}
+
 export default function Home() {
   const [csvData, setCsvData] = useState<ClientData[]>([]);
   const [numTeams, setNumTeams] = useState(2);
   const [teamNames, setTeamNames] = useState<string[]>(['Team 1', 'Team 2']);
-  const [assignments, setAssignments] = useState<{ [key: string]: ClientData[] }>({});
+  const [assignments, setAssignments] = useState<{ [key: string]: { client: ClientData; session: string }[] }>({});
+  const [sessionAssignments, setSessionAssignments] = useState<{ team: string; client: ClientData; session: string }[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const toast = useToast();
 
@@ -134,20 +262,16 @@ export default function Home() {
         throw new Error('Please upload a CSV file first');
       }
 
-      const assignments: { [key: string]: ClientData[] } = {};
-      
-      // Initialize empty arrays for each team
-      teamNames.forEach(team => {
-        assignments[team] = [];
+      // Assign sessions to teams
+      const { assignments, teamSessions } = assignSessionsToTeams(csvData, teamNames);
+      // Group by team for display
+      const grouped: { [key: string]: { client: ClientData; session: string }[] } = {};
+      teamNames.forEach((team) => (grouped[team] = []));
+      assignments.forEach(({ team, client, session }) => {
+        grouped[team].push({ client, session });
       });
-
-      // Distribute items evenly
-      csvData.forEach((item, index) => {
-        const teamIndex = index % teamNames.length;
-        assignments[teamNames[teamIndex]].push(item);
-      });
-
-      setAssignments(assignments);
+      setAssignments(grouped);
+      setSessionAssignments(assignments);
     } catch (error: unknown) {
       const errorWithMessage = toErrorWithMessage(error);
       toast({
@@ -237,12 +361,45 @@ export default function Home() {
           </VStack>
         </Box>
 
+        {csvData.length > 0 && (
+          <Box mt={8}>
+            <Heading as="h2" size="md" mb={4}>
+              Worksite Session & Team Requirements
+            </Heading>
+            <Table variant="striped" size="sm">
+              <Thead>
+                <Tr>
+                  <Th>Client Name</Th>
+                  <Th>Date Requested</Th>
+                  <Th>Sessions Needed</Th>
+                  <Th>Teams Required</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {csvData.map((client, idx) => {
+                  const { sessions, teams } = parseSessionAndTeams(client.jobLength || '');
+                  // Use column K (index 10) for date requested, abbreviate
+                  const dateRequested = abbreviateDateRequested(client.preferredDay);
+                  return (
+                    <Tr key={idx}>
+                      <Td>{client.name}</Td>
+                      <Td>{dateRequested}</Td>
+                      <Td>{sessions}</Td>
+                      <Td>{teams}</Td>
+                    </Tr>
+                  );
+                })}
+              </Tbody>
+            </Table>
+          </Box>
+        )}
+
         {Object.keys(assignments).length > 0 && (
           <Box mt={8}>
             <Heading as="h2" size="lg" mb={4}>
               Team Assignments
             </Heading>
-            {Object.entries(assignments).map(([team, clients]) => (
+            {Object.entries(assignments).map(([team, clientSessions]) => (
               <Box key={team} mb={8} p={4} borderWidth={1} borderRadius="md">
                 <Heading as="h3" size="md" mb={4}>
                   {team}
@@ -251,19 +408,19 @@ export default function Home() {
                   <Thead>
                     <Tr>
                       <Th>Client Name</Th>
+                      <Th>Assigned Session</Th>
                       <Th>Address</Th>
                       <Th>Travel Time</Th>
-                      <Th>Preferred Day</Th>
                       <Th>Job Length</Th>
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {clients.map((client, index) => (
+                    {clientSessions.map(({ client, session }, index) => (
                       <Tr key={index}>
                         <Td>{client.name}</Td>
+                        <Td>{session}</Td>
                         <Td>{client.address}</Td>
                         <Td>{client.travelTime}</Td>
-                        <Td>{client.preferredDay || 'Any'}</Td>
                         <Td>{client.jobLength || 'Not specified'}</Td>
                       </Tr>
                     ))}
